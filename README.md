@@ -1,234 +1,438 @@
-# fast-vpn：Lightsail VPN 部署仓库
+# fast-vpn
 
-在另一个地区的全新 **Ubuntu 24.04 LTS Lightsail** 实例上部署当前 fast-vpn 生产实例的功能和设置。支持 amd64 / arm64；不修改旧实例、不迁移旧秘密。与第一版精简仓库不同，这个版本恢复原版 `sub`、全量 Geo 缓存、AWS 套餐流量、域名用量采集及 TUI。
+在 **AWS Lightsail + Ubuntu 24.04 LTS** 上用一条命令部署的 Hysteria2 订阅式 VPN。  
+自带 Clash/Mihomo 订阅、大陆分流、HTTPS 证书自动化、流量统计和日常管理命令。
 
-当前基线、哈希和两处兼容修复见 [docs/PARITY.md](docs/PARITY.md)。实际服务及订阅的非敏感配置已经现场核对，结果见 [config/software-baseline.json](config/software-baseline.json)。部署服务设置、分流规则和流量记录功能；旧实例密钥、IP、订阅地址不复制，新实例独立生成/填写。流量历史不迁移，这也不是整机磁盘镜像。
+> **适合**：想在自己的 Lightsail 上快速搭一个稳定、可维护的个人/小团队 VPN。  
+> **不适合**：需要 Web 面板、多用户计费、多节点编排，或非 Lightsail 平台的人。
 
-## 1. AWS 控制台手动操作
+当前基线：Hysteria **2.14.0**、UDP 443 + Salamander、16MB UDP 缓冲 + BBR、Hysteria ACL、订阅内证书指纹固定。详见 [config/software-baseline.json](config/software-baseline.json) 和 [docs/PARITY.md](docs/PARITY.md)。
 
-1. 在所需地区新建 Linux/Unix → OS only → Ubuntu 24.04 LTS 实例。记录**地区代码**和**准确实例名**。
-2. 在同地区创建并绑定静态公网 IPv4。记录公网 IP，不用 `172.*` 等私有 IP。
-3. Networking → IPv4 firewall 开放下列端口。若自行启用了 UFW，也在操作系统中手动放行。脚本不改变 AWS/UFW 防火墙。
+## 目录
+
+- [你能得到什么](#你能得到什么)
+- [快速开始](#快速开始)
+- [导入客户端](#导入客户端)
+- [验收](#验收)
+- [常用命令](#常用命令)
+- [工作原理](#工作原理)
+- [可选：Lightsail 流量统计](#可选lightsail-流量统计)
+- [更新与回滚](#更新与回滚)
+- [换 IP、改名、轮换](#换-ip改名轮换)
+- [故障排查](#故障排查)
+- [安全须知](#安全须知)
+- [项目结构与测试](#项目结构与测试)
+- [旧安装迁移](#旧安装迁移)
+- [FAQ / 限制](#faq--限制)
+- [参考](#参考)
+
+## 你能得到什么
+
+- **Hysteria2**：UDP 443 + `salamander` 混淆，不需要域名。
+- **Clash/Mihomo 订阅**：CN 域名/IP 直连，其他走 `PROXY`；私有/链路本地地址直连；当前基线包含 t3 相关域名规则（不用可忽略）。
+- **HTTPS 订阅**：nginx 在 TCP 443 提供订阅/规则文件，使用 Let's Encrypt 的 IP 证书（短期证书，自动续期）；TCP 80 用于 ACME 和 HTTP 订阅。
+- **更稳的安全边界**：Hysteria 自签证书 + 订阅内 `fingerprint` 固定；Hysteria ACL 拒绝回环/私网/链路本地/云元数据地址；服务以非 root 的 `hysteria` 用户运行。
+- **性能基线**：16MB UDP 缓冲 + BBR。
+- **可观测性**：Lightsail 套餐流量（每 30 分钟）+ 按域名流量采集（SQLite + TUI）。
+- **可维护**：`sub` 管理命令、systemd 服务/定时器、Geo 每天更新 4 次、62 项单元测试。
+- **一条部署命令**：在 AWS 控制台准备好实例和端口后，执行一次 `deploy.sh`。
+
+## 快速开始
+
+### 0. 准备
+
+| 项目 | 要求 |
+|---|---|
+| 实例 | AWS Lightsail，Linux/Unix → OS only → **Ubuntu 24.04 LTS**，amd64/arm64 |
+| 网络 | 绑定**静态公网 IPv4**；记录准确 IP |
+| 防火墙 | TCP **22 / 80 / 443**，UDP **443**（不要开放 25413） |
+| 权限 | 能用 `sudo` 登录；实例可访问 Ubuntu 源、GitHub、snap |
+| 可选 | Lightsail 只读 IAM 身份（仅用于套餐流量显示）；准确的地区代码和实例名 |
+| 客户端 | Clash Mi、Clash Verge Rev、Clash Meta for Android（较新的 Mihomo 内核） |
+| 域名 | **不需要**，证书直接签给公网 IP |
+
+> `deploy.sh` 只适用于**全新专用实例**。已有 VPN 配置或已有服务的实例会被拒绝接管；旧安装请用 `update.sh` 或 `migrate.sh`。
+
+### 1. 创建实例和静态 IP
+
+1. 在 Lightsail 创建 Ubuntu 24.04 LTS 实例，记录**地区代码**（如 `ap-southeast-5`）和**准确实例名**。
+2. 在同地区创建静态 IPv4 并 attach 到实例，记录公网 IP。
+3. 确认能用 SSH 登录，并记下实例名；后面 `--region`、`--instance-name` 要用。
+
+### 2. 开放防火墙
+
+在 Lightsail → Networking → IPv4 firewall 添加入站规则；如果系统里启用了 UFW，也要同样放行。部署脚本**不会**改 AWS/UFW 防火墙。
 
 | 协议 | 端口 | 用途 |
 |---|---:|---|
-| TCP | 22 | SSH；按需限制自己的来源 IP，保留控制台 SSH 访问 |
-| TCP | 80 | 原版 HTTP 订阅和 IP 证书验证/续期；需保持 CA 可访问 |
-| TCP | 443 | HTTPS 订阅和规则文件 |
-| UDP | 443 | Hysteria2；与 TCP 443 分别添加 |
+| TCP | 22 | SSH；建议限制为自己的来源 IP，同时保留 Lightsail 控制台 SSH |
+| TCP | 80 | HTTP 订阅 + Let's Encrypt 验证/续期；需长期可达 |
+| TCP | 443 | HTTPS 订阅 + 规则文件 |
+| UDP | 443 | Hysteria2 代理流量 |
 
-不要开放 25413，它只在 `127.0.0.1` 提供域名统计 API。代理/订阅端口的来源范围需覆盖实际客户端；限制 IP 时不要遗漏手机移动网络。[AWS 防火墙文档](https://docs.aws.amazon.com/lightsail/latest/userguide/understanding-firewall-and-port-mappings-in-amazon-lightsail.html)。
+不要开放 **25413**：它只在 `127.0.0.1` 提供域名统计 API。限制来源 IP 时，别忘了手机移动网络。
 
-4. 登录新实例，确认可访问 Ubuntu 软件源、GitHub、snap 商店。准备好下面部署所需的参数。AWS API 的只读身份在第 3 节单独设置，不是创建 VPN 的先决条件。
-
-## 2. clone 后部署
-
-**已经安装旧版服务的实例，请跳到下面“旧实例增量更新”，不要运行 deploy.sh。** `deploy.sh` 用于新实例；`update.sh` 用于保留原设置和数据的代码更新。
+### 3. 部署
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y git
-git clone <你的仓库URL> fast-vpn
+git clone https://github.com/zheli2025/fast-vpn.git
 cd fast-vpn
-bash deploy.sh --help
+sudo bash deploy.sh --help
 ```
 
-阅读 [Let's Encrypt 条款](https://letsencrypt.org/repository/) 后执行；替换所有尖括号字段，node/name 也可自定义：
+阅读 [Let's Encrypt 条款](https://letsencrypt.org/repository/) 后执行，替换所有尖括号字段：
 
 ```bash
 sudo bash deploy.sh \
-  --ip <公网静态IPv4> \
-  --region ap-northeast-1 \
-  --instance-name <AWS控制台的准确实例名> \
-  --node '日本-Tokyo-01' \
-  --name tokyo-vpn \
+  --ip <静态公网IPv4> \
+  --region <AWS地区代码> \
+  --instance-name <Lightsail实例名> \
+  --node '<节点显示名>' \
+  --name <订阅名> \
   --accept-tos
 ```
 
-地区示例 `ap-northeast-1` 是东京，请填写你实际选择的地区。实例名必须准确，否则会取不到或取错统计目标。节点名最长 32 字符，不含双引号、反斜杠、控制字符，不用 PROXY/DIRECT 等策略名；订阅名限 1–32 位小写字母、数字、连字符。
+示例值：`--region ap-southeast-5 --node 'Malaysia-01' --name my-vpn`。
 
-邮箱可选：需要登记联系邮箱时自行加入 `--email 你的邮箱`。不填时，新账户使用 Certbot 无邮箱登记方式；已有账户邮箱不会被清除或修改。已有受 Certbot 管理、匹配 IP 且剩余有效期超过一天的证书直接复用，不重新申请；否则申请/续签，仍由定时器负责后续续期。旧部署填写过邮箱，也可省略该参数重跑，不因此改变服务配置或账户联系信息。
+参数说明：
 
-部署执行七步：
+- `--accept-tos`：接受 Let's Encrypt 服务条款。
+- `--email`：可选 ACME 联系邮箱；不填则不登记邮箱。
+- `--node`：最长 32 字符，不含双引号、反斜杠、控制字符，不要用 `PROXY`/`DIRECT` 等策略名。
+- `--name`：订阅名，1–32 位小写字母、数字、连字符。
+- `--instance-name`：必须和 Lightsail 控制台完全一致，否则流量统计会取错实例。
 
-1. 安装依赖，设定 `Etc/UTC` 时区。
-2. 下载当前生产版本 Hysteria **2.14.0**，验证官方 `hashes.txt`。
-3. 创建 hysteria、usage-tracker 用户及项目目录、日志权限，安装 16MB/BBR 内核参数。
-4. 生成目标机独立凭据、Hysteria 基础配置和本地统计 API；安装原版脚本、systemd 单元及已核对的内核参数。
-5. 原版 sub 先生成 HTTP 站点；安装 snap Certbot、申请 IP HTTPS 证书、启用续期后再次生成双协议站点。
-6. 首次下载全部五份规则文件，启动 Hysteria、域名采集和定时器。
-7. 尝试 AWS 套餐流量更新。未配置 AWS 身份时会明确警告；按第 3 节完成后补齐。
+脚本会做这些事：
 
-仅用于全新专用实例：检测到已有 VPN 配置或非本仓库的运行服务会拒绝接管；第一版精简仓库已经部署的实例也不直接接管。网络失败后可用**同一组参数**重跑，保留已有凭据和统计数据。参数变更使用 `sub` 管理命令，不通过改部署命令迁移。
+1. 安装依赖，统一为 `Etc/UTC`。
+2. 下载并校验 Hysteria **2.14.0**（官方 `hashes.txt`）。
+3. 创建 `hysteria`、`usage-tracker` 用户和目录，安装 16MB/BBR 参数。
+4. 生成目标机独立凭据、Hysteria 配置（含 ACL）、本地统计 API。
+5. 生成 HTTP 站点，申请 IP HTTPS 证书，启用自动续期，再生成双协议站点。
+6. 下载 Geo 规则，启动 Hysteria、域名采集和定时器。
+7. 尝试刷新 Lightsail 套餐流量（需要第 5 节的只读身份）。
 
-初次 Geo 下载失败会让部署退出；修复后重跑，不能把失败当作成功。脚本只固定 Hysteria 版本，不固定所有 Ubuntu、Nginx、Python、snap 包版本；不会从旧服务器拷贝二进制或账户资料。
+如果网络/Geo 下载失败，修复后**用同一组参数重跑**即可，已有凭据和统计数据会保留。  
+脚本只固定 Hysteria 版本，不固定 Ubuntu/Nginx/Python/snap 的所有版本。
 
-## 3. 手动配置 AWS 只读身份
-
-VPN 本身不用 AWS 凭据；**套餐配额/用量显示**需要目标机上的 boto3 能访问对应 Lightsail 实例。域名用量使用本地 API，不需要 AWS 权限。
-
-在 IAM 创建/使用独立只读身份，附加 [docs/aws-readonly-policy.json](docs/aws-readonly-policy.json)，只允许 `GetInstance`、`GetInstanceMetricData`。可进一步按 AWS 支持情况限制地区等条件。没有创建实例、改防火墙或更换 IP 的权限。[AWS Lightsail 权限参考](https://docs.aws.amazon.com/service-authorization/latest/reference/list_lightsail.html)。
-
-脚本使用标准 AWS SDK 凭据链。若使用访问密钥，由你在**新实例**手动配置 root 的默认 profile（服务和 sudo sub 以 root 运行）：
-
-```bash
-sudo install -d -m 0700 /root/.aws
-sudoedit /root/.aws/credentials
-```
-
-文件内容由你填写，勿发到聊天或写进仓库：
-
-```ini
-[default]
-aws_access_key_id = <新只读身份的AccessKeyID>
-aws_secret_access_key = <新只读身份的SecretAccessKey>
-```
-
-临时凭据还需 `aws_session_token`，并由你安排续期。保存后：
+## 导入客户端
 
 ```bash
-sudo chmod 0600 /root/.aws/credentials
-sudo systemctl start traffic-update.service
-sudo sub traffic status
+sudo sub url
 ```
 
-不要复制当前服务器的密钥。已有安全的临时身份提供方式时可继续用标准 boto3 配置；这里只给出可手动完成的默认 profile 方式。原版 status 的提示可能提到 EC2 风格实例角色，但不要把 Lightsail 服务关联角色当作应用可自动获得的身份；本部署不假定已附加此类角色。[AWS 身份说明](https://docs.aws.amazon.com/lightsail/latest/userguide/security_iam.html)。
+把输出的订阅 URL 导入 Clash Mi / Clash Verge Rev / Clash Meta for Android，更新订阅，选择 `PROXY` 节点，使用 **rule 模式**。
 
-运行参数在 `/etc/systemd/system/traffic-update.service.d/migrate.conf`。它只包含地区/实例名/IP，不放密钥。薄启动器使 timer 和手动 `sub traffic` 都读取它；`sub ip` 更新后两者保持一致。
+- URL 里含**私密 token**，不要截图、不要发群、不要贴日志。
+- 订阅同时支持 HTTP 和 HTTPS；**日常用 HTTPS**，HTTP 会明文传输 token。
+- 客户端支持时，会校验证书 `fingerprint`；`skip-cert-verify: true` 仍然保留，用于兼容旧客户端。
+- 建议从手机移动网络再测一次，确认 UDP 443 在别的网络也可用。
 
-## 4. 导入客户端和验收
+## 验收
 
 ```bash
 sudo sub status
-sudo sub url
 sudo sub geo status
 sudo sub traffic status
 sudo sub usage status
 sudo nginx -t
+systemctl is-active hysteria-server nginx domain-usage
 systemctl list-timers geo-update.timer traffic-update.timer domain-usage.timer snap.certbot.renew.timer
 ```
 
-URL 含私密令牌；原版 `sub update/name/node/token/rotate/ip` 也可能输出该 URL，不要分享终端日志。导入 Clash Mi、Clash Verge Rev 或 Clash Meta for Android 的近期 Mihomo 内核版本，更新订阅、选中节点，使用 rule 模式。PROXY 组保留 DIRECT 选项，日常需选代理节点。
+建议确认：
 
-从手机移动网络或另一台机器验证：HTTP/HTTPS 的订阅无 token 返回 403、带正确 token 可下载；`/geo/geosite-cn.mrs`、`/geo/geoip-cn.mrs` 能下载；代理出口是新服务器、大陆访问按规则直连。不能只靠 VPS 自测判断 UDP 公网可达。
+- 客户端能打开网页，出口 IP 是这台服务器；大陆站点按规则直连。
+- 订阅无 token 返回 403，带正确 token 返回 200。
+- `/geo/geosite-cn.mrs`、`/geo/geoip-cn.mrs` 能下载。
+- 产生一些代理 TCP 流量后，`sudo sub usage` 能看到数据。
+- 从手机/另一台机器测试，而不是只在 VPS 上自测。
 
-验证 `domain-usage.service`、Hysteria、Nginx、各 timer 为 active。产生一些代理 TCP 流量后看 `sudo sub usage` 和 `sudo sub usage tui` 是否有数据。没有流量时空表正常；采集只看每 5 秒的活跃 TCP 流快照，短连接、UDP 流量可能漏记，不等于完整账单计量。AWS 用量按原脚本统计月初 UTC 起的 NetworkIn+NetworkOut，不宣称等于 AWS 最终计费账单。
+## 常用命令
 
-## 5. 原版管理命令
+| 我想… | 命令 | 影响 |
+|---|---|---|
+| 查看状态 | `sudo sub status` | 只读 |
+| 获取订阅 URL | `sudo sub url` | 输出含 token，勿分享 |
+| 刷新订阅 YAML | `sudo sub update` | 不轮换密码；客户端刷新订阅 |
+| 改节点名 | `sudo sub node '新节点名'` | 客户端刷新订阅 |
+| 改订阅路径 | `sudo sub name new-name` | 客户端需要换新 URL |
+| 轮换订阅 token | `sudo sub token` | 旧 URL 失效，客户端换新 URL |
+| 轮换代理/混淆密码 | `sudo sub rotate` | Hysteria 短暂重启，客户端刷新订阅 |
+| 换公网 IP | `sudo sub ip <新IP>` | 更新证书/订阅/流量；客户端换新 URL |
+| 查套餐流量 | `sudo sub traffic status` | 只读 |
+| 查域名用量 | `sudo sub usage` / `sudo sub usage tui` | 只读 |
+| 更新 Geo | `sudo sub geo update` | 下载规则 |
+| 看 Hysteria 日志 | `sudo journalctl -u hysteria-server -n 50 --no-pager` | 只读 |
+| 检查代码更新 | `sudo bash update.sh --check` | 只读 |
+| 应用代码更新 | `sudo bash update.sh --apply` | 更新程序文件，不重建订阅/密钥 |
+| 回滚代码更新 | `sudo bash update.sh --rollback <备份ID>` | 只回退当次代码/单元 |
 
-```bash
-sudo sub help
-sudo sub update
-sudo sub name new-name
-sudo sub node '新节点名'
-sudo sub token
-sudo sub rotate
-sudo sub geo update
-sudo sub traffic update
-sudo sub usage today
-sudo sub usage month --json
-sudo sub usage tui
+`sub help` 可以随时查看完整用法。
+
+## 工作原理
+
+```text
+客户端（Clash / Mihomo）
+   ├─ TCP 443 ──> nginx：HTTPS 订阅、规则文件、IP 证书
+   ├─ TCP 80  ──> nginx：HTTP 订阅、ACME 验证
+   └─ UDP 443 ──> Hysteria2：代理流量
+                     ├─ ACL：拒绝回环/私网/链路本地/元数据地址
+                     ├─ trafficStats：127.0.0.1:25413
+                     └─ domain-usage：按域名统计（SQLite）
 ```
 
-`token` 会轮换订阅令牌，需要在客户端换 URL；`rotate` 会轮换代理及混淆密码并重启，客户端需刷新订阅；`name` 会改变订阅路径；`update` 不下载 Geo、不自动轮换密码。
+### 仓库 vs 运行时
 
-规则与当前基线一致：大陆域名直连，`cn-ip` 带 `no-resolve`，其他走 PROXY。VPS 北京时间 00/06/12/18 点更新全部五份 Geo；客户端 MRS 每 86400 秒刷新。该版本按当前设置每天四次，并非上一版仓库的每天一次。完整 Geo 保留在服务器，但客户端依然只引用两个 MRS，不因此加载全量 DAT/MMDB。
+这个仓库是**部署源码**，不是运行目录。systemd 的 `ExecStart` 全部指向系统路径，仓库里的文件只有 `deploy.sh`/`update.sh` 执行时才会被复制过去。
 
-## 6. 更换静态 IP
+| 仓库 | 安装后 |
+|---|---|
+| `scripts/sub.sh` | `/usr/local/bin/sub` |
+| `scripts/geo-update.sh` | `/usr/local/bin/geo-update` |
+| `scripts/traffic-launcher.py` | `/usr/local/bin/traffic-update` |
+| `scripts/traffic-update.py` | `/usr/local/lib/fast-vpn/traffic-update.py` |
+| `scripts/domain-usage.py` | `/usr/local/bin/domain-usage` |
+| `systemd/*` | `/etc/systemd/system/*` |
+| `config/99-fast-vpn.conf` | `/etc/sysctl.d/99-fast-vpn.conf` |
+| `config/tcp_bbr.conf` | `/etc/modules-load.d/tcp_bbr.conf` |
+| —（下载） | `/usr/local/bin/hysteria` |
+| —（生成） | `/etc/hysteria/config.yaml`、`/etc/hysteria/certs/` |
+| —（生成） | `/var/www/html/<name>.yaml`、`/var/www/html/geo/` |
+| —（生成） | `/etc/nginx/sites-available/vpn-subscription` |
+| —（生成） | `/etc/letsencrypt/` |
+| —（标记） | `/etc/fast-vpn/install.json` |
 
-先在 AWS 绑定新静态 IPv4，检查 TCP 80/443、UDP 443。通过新 IP SSH 登录同一实例：
+要点：
+
+- 改仓库不会自动改线上；需要 `deploy.sh`、`update.sh --apply` 或手动安装。
+- `/etc/hysteria/config.yaml`、证书私钥、订阅 YAML/token、SQLite、AWS 凭据都不在仓库里。
+- `/etc/fast-vpn/install.json` 是防误接管的安装标记，不要手改。
+- 当前基线/哈希/权限见 [docs/PARITY.md](docs/PARITY.md)。
+
+## 可选：Lightsail 流量统计
+
+VPN 本身**不需要** AWS 凭据；只有“套餐配额/已用流量”显示需要。
+
+1. 在 IAM 创建只读身份，附加 [docs/aws-readonly-policy.json](docs/aws-readonly-policy.json)（只允许 `GetInstance`、`GetInstanceMetricData`）。
+2. 在实例上配置 root 的默认 profile：
 
 ```bash
-sudo sub ip <新公网IPv4>
-sudo sub status
-sudo sub url
-sudo sub traffic update
+sudo install -d -m 0700 /root/.aws
+sudoedit /root/.aws/credentials
+sudo chmod 0600 /root/.aws/credentials
 ```
 
-原版命令依次申请新 IP HTTPS 证书、备份并更换自签证书、重启 Hysteria、更新订阅/Nginx/流量 IP、清理旧 IP 证书。认证密码、混淆密码和订阅 token 保留，所有客户端需要改 URL 主机并刷新。
-
-保留原版的分阶段回滚行为，不等于整个迁移事务性：自签证书更新后若后续步骤失败，可能处于部分完成状态。必要时修复错误后 `sudo sub update`；若需回退外部 IP，必须在 AWS 手动重新绑定。不要在新证书/订阅未就绪时反复运行同 IP 的 `sub ip`，原版会拒绝“与当前 IP 相同”。
-
-首次部署参数文件仅用于重入保护，不随日常改名/IP 更新。迁移后不要用旧参数重跑 deploy 来恢复服务；用 `sub`。灾难恢复应在新实例重新部署。
-
-## 7. HTTPS 和安全行为
-
-无域名 IP HTTPS 使用约 6 天有效的 Let's Encrypt 短期证书，snap Certbot 自动续期并运行 Nginx reload 钩子；TCP 80 要长期允许 CA 验证。webroot IP 证书需要 Certbot 5.4 或更新版本。[Let's Encrypt 官方说明](https://letsencrypt.org/2026/03/11/shorter-certs-certbot)。
-
-```bash
-sudo /snap/bin/certbot renew --dry-run
-sudo journalctl -u snap.certbot.renew.service --since '24 hours ago'
-sudo journalctl -u hysteria-server.service -n 50 --no-pager
-sudo journalctl -u geo-update.service -n 50 --no-pager
-sudo journalctl -u traffic-update.service -n 50 --no-pager
-sudo journalctl -u domain-usage.service -n 50 --no-pager
+```ini
+[default]
+aws_access_key_id = <只读AccessKeyID>
+aws_secret_access_key = <只读SecretAccessKey>
 ```
 
-证书失败检查 IP 绑定、TCP 80、ACME 路径和 `/var/log/letsencrypt/letsencrypt.log`。不要高频重复申请以免触发 CA 限额。日志分享前脱敏；查看日志不需要把密钥文件发给任何人。
-
-为保持兼容，保留 HTTP 和公开 webroot 结构，**不会自动升级为 HTTPS-only 或“公开目录之外的订阅”**。日常使用 HTTPS URL；HTTP 会明文传输 token 和订阅。原版精确路径有 token 校验，但公开 webroot 的其他副本/备份不自动保护，勿把任何订阅备份、临时秘密文件放进该目录。Hysteria UDP 使用独立自签证书，订阅内用证书 `fingerprint` 固定；`skip-cert-verify: true` 仅用于兼容旧客户端，不等同于订阅 HTTPS 的受信任身份验证。
-
-## 8. 文件、测试和 Git
-
-运行路径保持当前结构：`/etc/hysteria/config.yaml`、`/etc/hysteria/.sub-*`、`/etc/hysteria/.traffic-stats-secret`、`/var/www/html/<name>.yaml`、`/var/www/html/geo/`、`/var/lib/traffic/`、`/var/lib/domain-usage/`、`/etc/nginx/sites-available/vpn-subscription`。这些运行文件均不存放在 clone 目录。配置/权限详情见 [基线记录](docs/PARITY.md)。
-
-部署参数文件 `/etc/fast-vpn/install.json` 不含密码。它是防止误接管/误改参数的安装标记，不是用来手改服务配置的源文件。日常使用 `sub`。
-
-本地验证只使用临时目录和模拟服务调用，不读取生产密钥或调用 AWS：
+3. 刷新并查看：
 
 ```bash
-bash -n deploy.sh update.sh migrate.sh scripts/sub.sh scripts/geo-update.sh scripts/reload-nginx.sh
-python3 -m unittest discover -s tests -v
+sudo systemctl start traffic-update.service
+sudo sub traffic status
 ```
 
-测试还检查当前基线哈希和两处已记录的报表/清理修复；不代替新实例的 ACME、公网 UDP、手机实际连接验收。基线版本需定期核对上游更新，升级仍需单独检查和验证。
+说明：
 
-你可以在此独立仓库手动设置远程和 push：
+- 不要复制其他服务器的密钥；不要提交 `/root/.aws/`。
+- 地区/实例名/IP 在 `/etc/systemd/system/traffic-update.service.d/migrate.conf`，不含密钥。
+- 流量是月初 UTC 起的 NetworkIn+NetworkOut，**不是 AWS 最终账单**；域名用量采样活跃 TCP 流，短连接/UDP 可能漏记。
 
-```bash
-git remote add origin <你的仓库URL>
-git push -u origin main
-```
+## 更新与回滚
 
-不要从父目录提交原服务器运行数据。`.gitignore` 排除常见私钥、订阅 YAML、状态、数据库、AWS 凭据和日志，但不代替提交前检查。
-
-## 9. 旧实例增量更新
-
-按组件识别本项目的旧安装，不要求订阅、Geo、AWS 套餐统计、域名采集全部安装，也不要求本仓库的安装标记。先确认存在 `/etc/hysteria/config.yaml` 和 Hysteria 服务单元，再独立判断每个组件：能够安全识别的组件可增量更新，缺失或布局不同的组件提示后跳过，保留原服务。第一版精简 Python sub 或第三方脚本也不会被强行转换；请勿运行 deploy.sh 覆盖旧实例。
-
-在已有实例上 clone 到独立目录，或者已有 clone 执行 `git pull --ff-only`，然后：
+`update.sh` 用于**已有安装的代码更新**，默认只检查：
 
 ```bash
-cd fast-vpn
+cd ~/fast-vpn
 sudo bash update.sh --check
 sudo bash update.sh --apply
 ```
 
-省略参数也只做检查。检查不更改目标文件、不备份、不重启，不读取密码/订阅/数据库/AWS 凭据，只检查运行文件存在性、程序指纹和地区/实例元数据。较早安装没有 `.sub-state/.sub-node/.sub-token` 等文件时，会保留它的旧 sub；没有域名或套餐统计时，会提示这些组件尚未安装，而不是报整个安装不兼容。
-
-缺失组件不会在增量更新时自动创建/启用。尤其不能随意新建 `.sub-token` 或调用初始化来“修复检查”，否则可能破坏已有订阅和密码。要把基础旧服务补齐为完整服务，使用 [基础旧安装迁移指南](docs/MIGRATE.md) 中的 `migrate.sh`，不能只靠放宽检查就宣称迁移完成。
-
-`待确认` 表示某个已安装程序是未收录旧版或有本地改动：`--check` 会列出，`--apply` 仍会停止，不盲目覆盖。如果当前没有可自动更新的代码，检查会明确说明，不表示缺失功能已经安装。
-
-默认更新已识别组件对应的 sub、geo-update、traffic-update、domain-usage 程序文件；流量统计组件完整时新增薄启动器，以便手动查询和 timer 使用同一地区/实例参数。**保留原服务 YAML、密钥、订阅路径/token、Nginx 站点、systemd 单元及 drop-in、Geo 缓存、流量历史、SQLite、AWS 身份和证书。** 不运行初始化、sub update、证书申请或 Geo 下载，也不重装/升级 Hysteria/Nginx、不改防火墙、时区和 sysctl。因此现有分流与订阅地址不会被重建，更新后可继续用原链接。
-
-程序文件与仓库相同则跳过。仅在域名采集代码改变且采集器原本运行时重启它，默认不会重启 Hysteria；可能产生短暂采集间隙。若 Geo/AWS/清理一次性任务正在运行，先等它结束再重试。更新期间避免并发运行 sub 或安装脚本；更新器锁住部署入口，但不能阻止旧脚本或 timer 在检查后启动任务。
-
-若明确需要把**服务单元/定时器**同步成当前仓库版本，先检查，再显式添加参数：
+可选：把 `systemd` 单元也同步成仓库版本（可能重启服务、短暂断线）：
 
 ```bash
 sudo bash update.sh --check --update-units
 sudo bash update.sh --apply --update-units
 ```
 
-此模式可能改变原版默认定时设置，必要时会重启受影响且原本 active 的服务/timer；更新 Hysteria 单元可能短暂断线。仍不覆盖 drop-in。自定义单元或程序若无法根据原版哈希/上次更新记录识别，更新器停止，不自动覆盖；应先人工审查，默认更新仍保留自定义单元。
-
-每次实际更新都会把涉及的**程序/单元**备份到 root 私有目录 `/var/backups/fast-vpn-update/<ID>/`；不复制密钥或数据库。发生安装/重启错误会尝试恢复这些文件。成功时终端打印备份 ID，需要时回退：
+回滚：
 
 ```bash
 sudo bash update.sh --rollback <备份ID>
 ```
 
-回退只恢复当次替换的代码/单元，不重置配置或流量历史。若之后又改了程序或又更新过，应按时间逆序回退；检测到文件变化会停止，避免覆盖新改动。强杀、断电、磁盘损坏或回退重启失败不保证自动恢复成功，保留备份用于人工恢复。
+说明：
 
-先阅读检查输出，只更新已核对的这套安装。此更新器已用临时目录测试，但没有在你的生产服务上执行 `--apply`。
+- 每次实际更新会把程序/单元备份到 `/var/backups/fast-vpn-update/<ID>/`；回滚只恢复当次代码/单元，不重置配置或流量历史。
+- `--check` 显示“待确认”表示某个程序是未收录旧版或有本地改动；`--apply` 会停止，不要强行覆盖，先人工核对。
+- **`update.sh` 不升级 Hysteria 二进制、ACL 或 sysctl**，也不改订阅/密钥/证书。Hysteria 当前固定在 2.14.0；升级属于单独的、需要验证的变更。
+- 新实例用 `deploy.sh`；旧安装用 `migrate.sh`；不要把 `deploy.sh` 跑在已有服务的实例上。
+
+## 换 IP、改名、轮换
+
+| 操作 | 命令 | 客户端影响 |
+|---|---|---|
+| 换公网 IP | `sudo sub ip <新IP>` | 需要换新 URL；认证/混淆密码/token 保留 |
+| 改订阅路径 | `sudo sub name new-name` | 需要换新 URL |
+| 改节点显示名 | `sudo sub node '新节点名'` | 刷新订阅即可 |
+| 轮换 token | `sudo sub token` | 旧 URL 失效，换新 URL |
+| 轮换代理/混淆密码 | `sudo sub rotate` | 刷新订阅；Hysteria 短暂重启 |
+| 仅刷新订阅 | `sudo sub update` | 刷新订阅；不轮换密码 |
+
+换 IP 前：
+
+1. 在 AWS 绑定新静态 IPv4，并确认 TCP 80/443、UDP 443 已放行。
+2. 通过新 IP SSH 登录同一实例。
+3. 执行 `sudo sub ip <新IP>`，然后 `sudo sub status`、`sudo sub traffic update`。
+4. 客户端换新 URL 并刷新订阅。
+
+`sub ip` 会依次处理新 IP 的 HTTPS 证书、Hysteria 自签证书、订阅、流量统计和旧证书清理。它不是完整事务：如果中途失败，修复后运行 `sudo sub update`；不要对同一个 IP 反复执行 `sub ip`。
+
+## 故障排查
+
+### 客户端连不上
+
+- Lightsail 防火墙和 UFW 是否放行 **UDP 443**？
+- `systemctl status hysteria-server`、`sudo journalctl -u hysteria-server -n 50 --no-pager`。
+- `sudo ss -ulnp | grep :443` 是否在监听。
+- 客户端是否刷新了订阅、是否选中 `PROXY`、是否 rule 模式。
+- Hysteria2 只走 UDP；如果当前网络封 UDP，换网络测试，没有 TCP 回退。
+
+### 订阅返回 403
+
+- URL 里的 token 是否完整；是否在别处执行过 `sudo sub token`。
+- `sudo sub status` 看订阅/鉴权状态；`sudo sub url` 重新获取 URL（勿分享）。
+- 如果怀疑泄露，执行 `sudo sub token` 轮换，然后客户端换新 URL。
+
+### HTTPS 订阅/证书失败
+
+- TCP 80 是否长期可达；IP 是否已 attach 到实例。
+- `sudo /snap/bin/certbot renew --dry-run`
+- `sudo journalctl -u snap.certbot.renew.service --since '24 hours ago'`
+- `/var/log/letsencrypt/letsencrypt.log`
+- 不要高频重复申请，避免触发 CA 限额。
+
+### 没有套餐流量
+
+- 是否配置了只读 AWS 身份；`sudo systemctl start traffic-update.service`。
+- `sudo sub traffic status`；检查 `/etc/systemd/system/traffic-update.service.d/migrate.conf` 的地区/实例名。
+- 没有 AWS 身份不影响 VPN 本身。
+
+### Geo 规则缺失
+
+```bash
+sudo sub geo update
+sudo sub geo status
+sudo journalctl -u geo-update.service -n 50 --no-pager
+```
+
+### 域名用量为空
+
+- 需要产生一些代理 **TCP** 流量后再看。
+- `sudo sub usage status`；采集器每 5 秒看一次活跃流，短连接/UDP 可能漏记。
+- 不代表完整账单。
+
+### `update.sh` 显示“待确认”
+
+- 某个已安装程序与仓库/基线不一致，可能有本地改动。
+- 先 `sudo bash update.sh --check` 看差异，人工核对后再决定；不要直接强行覆盖。
+
+## 安全须知
+
+- **订阅 URL = 密码**：含 token，不要分享、不要贴日志/截图。泄露后执行 `sudo sub token`。
+- **优先 HTTPS**：HTTP 订阅会明文传输 token；TCP 80 主要留给 ACME/兼容。
+- **证书固定**：Hysteria 使用自签证书，订阅里用 `fingerprint` 固定；`skip-cert-verify: true` 只为兼容旧客户端。建议使用较新的 Mihomo。
+- **ACL 不要随便删**：默认拒绝回环/私网/链路本地/云元数据地址，避免代理被用来访问服务器内网或 169.254.169.254。
+- **SSH 收口**：限制 22 的来源 IP，保留 Lightsail 控制台 SSH 作为兜底。
+- **AWS 凭据只读**：只附加 `GetInstance`、`GetInstanceMetricData`；放在 `/root/.aws/`，不要提交。
+- **25413 不要对外开放**：它只监听 `127.0.0.1`。 
+- **备份可能含密钥**：迁移备份在 root 私有目录；不要上传 Git/聊天。`update.sh` 的程序备份不含密钥。
+- **仓库不存秘密**：`.gitignore` 排除了常见密钥/订阅/数据库/日志，但提交前仍要检查。
+
+## 项目结构与测试
+
+```text
+.
+├── deploy.sh           # 全新实例部署
+├── update.sh           # 已有安装的代码更新/回滚
+├── migrate.sh          # 基础旧安装迁移
+├── scripts/            # sub、Geo、流量、域名统计等
+├── systemd/            # 服务与定时器模板
+├── config/             # 基线配置、sysctl
+├── docs/               # 基线记录、迁移指南、AWS 只读策略
+└── tests/              # 单元测试
+```
+
+本地检查（不读取生产密钥，不调用 AWS）：
+
+```bash
+bash -n deploy.sh update.sh migrate.sh scripts/*.sh
+python3 -m unittest discover -s tests -v
+```
+
+当前 62 项测试应全部通过。测试会检查基线哈希和两处已记录的兼容修复，但不替代新实例的 ACME、公网 UDP、手机实际连接验收。
+
+仓库只放代码/文档/模板；不要从运行目录复制私钥、订阅 YAML、SQLite、AWS 凭据或日志进仓库。
+
+## 旧安装迁移
+
+**已有服务/旧安装不要运行 `deploy.sh`。** 基础旧安装先读 [docs/MIGRATE.md](docs/MIGRATE.md)，然后：
+
+```bash
+sudo bash migrate.sh --check <参数...>
+sudo bash migrate.sh --apply --replace-legacy-code <参数...>
+```
+
+需要顺带升级 Hysteria 时显式加 `--upgrade-hysteria`；旧公开订阅可加 `--archive-old-subscriptions`；旧静态站点可用 `--adopt-nginx-site`。完整参数和回滚说明见文档。
+
+普通的已有 fast-vpn 安装只需要 `update.sh`，不要跑 `migrate.sh`。
+
+## FAQ / 限制
+
+**需要域名吗？**  
+不需要。订阅 HTTPS 用 Let's Encrypt 的 IP 证书，短期证书自动续期；TCP 80 要长期可达。
+
+**可以多用户吗？**  
+当前是单密码/单订阅模型，多设备可共享同一订阅；`sub rotate` 会全局轮换。没有按用户计费/限额。
+
+**支持 IPv6 客户端吗？**  
+客户端配置是 `ipv6: false`，不做 IPv6 代理；服务器 OS 的 IPv6 保持启用但未用于客户端出口。
+
+**支持 UDP 吗？**  
+支持，Hysteria2 本身就是 UDP；ACL 同样生效。如果网络封 UDP 443，就连不上。
+
+**有端口跳跃、mimic、Brutal 吗？**  
+没有内置。可以在 Hysteria 配置/客户端上手动加；端口跳跃还需要改防火墙和权限，mimic 需要 root/eBPF，属于单独变更。
+
+**能装在其他云/其他系统吗？**  
+部署脚本面向 Lightsail + Ubuntu 24.04；其他平台需要自行适配防火墙、AWS 流量统计和依赖，不保证可用。
+
+**流量统计是账单吗？**  
+不是。套餐流量按月初 UTC 的 NetworkIn+NetworkOut 估算；域名用量是 5 秒采样的活跃 TCP 流，短连接/UDP 可能漏记。
+
+**怎么卸载？**  
+没有卸载脚本；最干净的方式是销毁 Lightsail 实例。不要只删仓库目录，systemd 服务和证书还在。
+
+**会跟随 Hysteria 自动升级吗？**  
+不会。仓库固定 Hysteria 2.14.0；升级需要单独改 `deploy.sh`/验证。`update.sh` 只更新代码组件。
+
+**为什么有 TCP 80 和 TCP 443？**  
+80 用于 ACME 验证和 HTTP 订阅，443 用于 HTTPS 订阅；UDP 443 是 Hysteria。不要开放 25413。
+
+**成本大概是什么？**  
+Lightsail 实例 + 静态 IP + 套餐流量；Let's Encrypt 免费。具体看 AWS 价格页和套餐额度。
+
+## 参考
+
+- [Hysteria 2 文档](https://v2.hysteria.network/)
+- [Let's Encrypt 服务条款](https://letsencrypt.org/repository/)
+- [Lightsail 防火墙说明](https://docs.aws.amazon.com/lightsail/latest/userguide/understanding-firewall-and-port-mappings-in-amazon-lightsail.html)
+- [当前基线记录](docs/PARITY.md)
+- [旧安装迁移指南](docs/MIGRATE.md)
+- [AWS 只读策略](docs/aws-readonly-policy.json)
