@@ -27,7 +27,7 @@ def ipv4(value):
 
 
 def parser():
-    p=argparse.ArgumentParser(description='复现原服务：sudo bash deploy.sh --ip IP --node 节点名 --name 订阅名 --region AWS地区 --instance-name 实例名 [--email 邮箱] --accept-tos')
+    p=argparse.ArgumentParser(description='部署当前 fast-vpn 生产实例：sudo bash deploy.sh --ip IP --node 节点名 --name 订阅名 --region AWS地区 --instance-name 实例名 [--email 邮箱] --accept-tos')
     p.add_argument('--ip',type=ipv4,required=True)
     p.add_argument('--node',required=True)
     p.add_argument('--name',default='aws-hysteria')

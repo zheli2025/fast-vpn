@@ -47,7 +47,8 @@
 | 网络 | 绑定**静态公网 IPv4**；记录准确 IP |
 | 防火墙 | TCP **22 / 80 / 443**，UDP **443**（不要开放 25413） |
 | 权限 | 能用 `sudo` 登录；实例可访问 Ubuntu 源、GitHub、snap |
-| 可选 | Lightsail 只读 IAM 身份（仅用于套餐流量显示）；准确的地区代码和实例名 |
+| 参数 | 准确的 AWS 地区代码、Lightsail 实例名；节点名/订阅名可自定义 |
+| 可选 | Lightsail 只读 IAM 身份（仅用于套餐流量显示） |
 | 客户端 | Clash Mi、Clash Verge Rev、Clash Meta for Android（较新的 Mihomo 内核） |
 | 域名 | **不需要**，证书直接签给公网 IP |
 
