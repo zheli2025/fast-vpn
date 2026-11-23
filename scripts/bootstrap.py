@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-MARKER=Path('/etc/lightsail-vpn/install.json')
+MARKER=Path('/etc/fast-vpn/install.json')
 BASE=Path('/etc/hysteria')
 TRAFFIC=Path('/etc/systemd/system/traffic-update.service.d/migrate.conf')
 

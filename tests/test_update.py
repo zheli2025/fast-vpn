@@ -72,14 +72,14 @@ class TestUpdate(unittest.TestCase):
         self.assertEqual(before,{p:p.read_bytes() for p in protected})
         self.assertEqual((self.root/'usr/local/bin/traffic-update').read_bytes(),old)
         self.assertNotIn(['systemctl','restart','hysteria-server.service'],self.calls)
-        self.assertFalse((self.root/'usr/local/lib/lightsail-vpn/traffic-update.py').exists())
+        self.assertFalse((self.root/'usr/local/lib/fast-vpn/traffic-update.py').exists())
 
     def test_restart_failure_restores_code(self):
         before={path:self.update.path(path).read_bytes() for path in mod.FILES if self.update.path(path).exists()}
         self.fail_restart=True
         with self.assertRaises(RuntimeError),contextlib.redirect_stdout(io.StringIO()): self.update.apply()
         self.assertEqual(before,{path:self.update.path(path).read_bytes() for path in before})
-        self.assertFalse((self.root/'usr/local/lib/lightsail-vpn/traffic-update.py').exists())
+        self.assertFalse((self.root/'usr/local/lib/fast-vpn/traffic-update.py').exists())
 
     def test_unknown_local_code_is_preserved(self):
         path=self.root/'usr/local/bin/sub'; path.write_bytes(b'custom local code')
@@ -119,14 +119,14 @@ class TestUpdate(unittest.TestCase):
         self.assertTrue(any('AWS 套餐统计' in message for message in self.update.notices))
         with contextlib.redirect_stdout(io.StringIO()): self.update.apply()
         self.assertEqual(before,{p:p.read_bytes() for p in before})
-        self.assertFalse((self.root/'var/backups/lightsail-vpn-update').exists())
+        self.assertFalse((self.root/'var/backups/fast-vpn-update').exists())
 
     def test_partial_update_registry_ignores_missing_units_and_unknown_sub(self):
         (self.root/'etc/hysteria/.sub-state').unlink()
         (self.root/'etc/systemd/system/domain-usage.timer').unlink()
         sub=self.root/'usr/local/bin/sub'; sub.write_bytes(b'unknown legacy sub')
         with contextlib.redirect_stdout(io.StringIO()): stamp=self.update.apply()
-        registry=json.loads((self.root/'var/lib/lightsail-vpn-updater/installed.json').read_text())
+        registry=json.loads((self.root/'var/lib/fast-vpn-updater/installed.json').read_text())
         self.assertNotIn('/usr/local/bin/sub',registry)
         self.assertEqual(sub.read_bytes(),b'unknown legacy sub')
         with contextlib.redirect_stdout(io.StringIO()): self.update.rollback(stamp)
@@ -159,7 +159,7 @@ class TestUpdate(unittest.TestCase):
     def test_running_job_prevents_update(self):
         self.active.add('geo-update.service')
         with self.assertRaises(ValueError): self.update.apply()
-        self.assertFalse((self.root/'var/backups/lightsail-vpn-update').exists())
+        self.assertFalse((self.root/'var/backups/fast-vpn-update').exists())
 
     def test_rollback_rejects_new_local_changes(self):
         with contextlib.redirect_stdout(io.StringIO()): stamp=self.update.apply()

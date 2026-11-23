@@ -71,7 +71,7 @@ sudo bash migrate.sh --inspect-nginx
 
 ## 备份和失败恢复
 
-备份在 `/var/backups/lightsail-vpn-migration/<ID>/`，目录 700、文件 600。**包含原配置中的秘密，勿上传 Git 或发到聊天。** 不备份私钥文件本身或 AWS 凭据。
+备份在 `/var/backups/fast-vpn-migration/<ID>/`，目录 700、文件 600。**包含原配置中的秘密，勿上传 Git 或发到聊天。** 不备份私钥文件本身或 AWS 凭据。
 
 CA 验证、下载或服务启动失败，会尝试恢复程序、配置、旧默认站点、旧公开订阅和服务状态。有效缓存、日志、软件包/账户和新申请的证书可能保留；不是整机事务回滚。成功后备份保留；不能用 update.sh 的代码回退 ID 回退迁移，如需恢复，应在本机根据迁移 manifest 人工恢复。
 

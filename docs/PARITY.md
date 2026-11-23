@@ -28,7 +28,7 @@
 
 必须重新生成/手动配置：认证密码、混淆密码、订阅 token、统计 API secret、自签证书、IP HTTPS 证书、AWS 身份。历史流量/数据库不迁移。显式 LS_INSTANCE_NAME 优先定位实例，因此不依赖原服务器的 PRIVATE_IP。
 
-为支持不同地区，`/usr/local/bin/traffic-update` 是一个读取同一份 `migrate.conf` 的薄启动器，原版核心脚本安装在 `/usr/local/lib/lightsail-vpn/traffic-update.py`。这样 `sub traffic update` 手动调用也使用正确实例，而不只有 systemd timer 获得 Environment 参数；`sub ip` 更新该文件后立即对两者生效。这是部署参数适配，不改变统计算法。
+为支持不同地区，`/usr/local/bin/traffic-update` 是一个读取同一份 `migrate.conf` 的薄启动器，原版核心脚本安装在 `/usr/local/lib/fast-vpn/traffic-update.py`。这样 `sub traffic update` 手动调用也使用正确实例，而不只有 systemd timer 获得 Environment 参数；`sub ip` 更新该文件后立即对两者生效。这是部署参数适配，不改变统计算法。
 
 ## 实际配置核对结论
 

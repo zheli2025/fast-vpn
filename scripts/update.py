@@ -14,12 +14,12 @@ import sys
 import tempfile
 
 REPO=Path(__file__).resolve().parents[1]
-BACKUPS='/var/backups/lightsail-vpn-update'
+BACKUPS='/var/backups/fast-vpn-update'
 FILES={
     '/usr/local/bin/sub': ('scripts/sub.sh',0o755),
     '/usr/local/bin/geo-update': ('scripts/geo-update.sh',0o755),
     '/usr/local/bin/domain-usage': ('scripts/domain-usage.py',0o755),
-    '/usr/local/lib/lightsail-vpn/traffic-update.py': ('scripts/traffic-update.py',0o755),
+    '/usr/local/lib/fast-vpn/traffic-update.py': ('scripts/traffic-update.py',0o755),
     '/usr/local/bin/traffic-update': ('scripts/traffic-launcher.py',0o755),
 }
 REQUIRED=(
@@ -44,7 +44,7 @@ COMPONENTS={
     'AWS 套餐统计': (('/usr/local/bin/traffic-update',
                      '/etc/systemd/system/traffic-update.service.d/migrate.conf',
                      '/etc/systemd/system/traffic-update.service'),
-                    ('/usr/local/lib/lightsail-vpn/traffic-update.py','/usr/local/bin/traffic-update'),
+                    ('/usr/local/lib/fast-vpn/traffic-update.py','/usr/local/bin/traffic-update'),
                     ('traffic-update.service','traffic-update.timer')),
 }
 
@@ -79,7 +79,7 @@ class Updater:
         legacy=self.repo/'config/legacy-unit-hashes.json'
         if legacy.exists(): hashes.update(json.loads(legacy.read_text()).values())
         # 上一次成功更新登记的文件哈希，允许从后续仓库版本继续增量更新。
-        registry=self.path('/var/lib/lightsail-vpn-updater/installed.json')
+        registry=self.path('/var/lib/fast-vpn-updater/installed.json')
         if registry.exists(): hashes.update(json.loads(registry.read_text()).values())
         return hashes
 
@@ -145,7 +145,7 @@ class Updater:
             # 没有更新的自定义单元不能被登记成“受管理”，否则下次会误覆盖。
             if checksum in known or data==(self.repo/source).read_bytes():
                 values[target]=checksum
-        self.atomic(self.path('/var/lib/lightsail-vpn-updater/installed.json'),json.dumps(values).encode(),0o600)
+        self.atomic(self.path('/var/lib/fast-vpn-updater/installed.json'),json.dumps(values).encode(),0o600)
 
     def apply(self,units=False):
         changes=self.plan(units)
@@ -242,7 +242,7 @@ def main():
         if updater.blocked: print('存在未识别代码，--apply 会停止；请先核对，不能视为完整兼容通过。')
         print('原配置、订阅、密钥、Geo 缓存、SQLite 和 AWS 凭据均不变。')
         return
-    lock=Path('/run/lightsail-vpn-deploy.lock')
+    lock=Path('/run/fast-vpn-deploy.lock')
     with lock.open('a') as stream:
         fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if a.rollback: updater.rollback(a.rollback)

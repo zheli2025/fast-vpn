@@ -25,4 +25,4 @@ if __name__=='__main__':
         os.environ.update(settings(os.environ.get('TRAFFIC_SERVICE_OVERRIDE','/etc/systemd/system/traffic-update.service.d/migrate.conf')))
     except (OSError,ValueError):
         sys.exit('error: 流量统计实例配置缺失；请检查 README 和 migrate.conf')
-    os.execv('/usr/bin/python3',['python3','/usr/local/lib/lightsail-vpn/traffic-update.py',*sys.argv[1:]])
+    os.execv('/usr/bin/python3',['python3','/usr/local/lib/fast-vpn/traffic-update.py',*sys.argv[1:]])

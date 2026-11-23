@@ -1,4 +1,4 @@
-# Lightsail VPN：原服务复现部署仓库
+# fast-vpn：Lightsail VPN 部署仓库
 
 在另一个地区的全新 **Ubuntu 24.04 LTS Lightsail** 实例上复现当前项目的功能和已核对设置。支持 amd64 / arm64；不修改旧实例、不迁移旧秘密。与第一版精简仓库不同，这个版本恢复原版 `sub`、全量 Geo 缓存、AWS 套餐流量、域名用量采集及 TUI。
 
@@ -28,8 +28,8 @@
 ```bash
 sudo apt-get update
 sudo apt-get install -y git
-git clone <你的仓库URL> lightsail-vpn
-cd lightsail-vpn
+git clone <你的仓库URL> fast-vpn
+cd fast-vpn
 bash deploy.sh --help
 ```
 
@@ -172,7 +172,7 @@ sudo journalctl -u domain-usage.service -n 50 --no-pager
 
 运行路径与原项目一致：`/etc/hysteria/config.yaml`、`/etc/hysteria/.sub-*`、`/etc/hysteria/.traffic-stats-secret`、`/var/www/html/<name>.yaml`、`/var/www/html/geo/`、`/var/lib/traffic/`、`/var/lib/domain-usage/`、`/etc/nginx/sites-available/vpn-subscription`。这些运行文件均不存放在 clone 目录。配置/权限详情见 [复现记录](docs/PARITY.md)。
 
-部署参数文件 `/etc/lightsail-vpn/install.json` 不含密码。它是防止误接管/误改参数的安装标记，不是用来手改服务配置的源文件。日常使用原版 `sub`。
+部署参数文件 `/etc/fast-vpn/install.json` 不含密码。它是防止误接管/误改参数的安装标记，不是用来手改服务配置的源文件。日常使用原版 `sub`。
 
 本地验证只使用临时目录和模拟服务调用，不读取生产密钥或调用 AWS：
 
@@ -199,7 +199,7 @@ git push -u origin main
 在已有实例上 clone 到独立目录，或者已有 clone 执行 `git pull --ff-only`，然后：
 
 ```bash
-cd lightsail-vpn
+cd fast-vpn
 sudo bash update.sh --check
 sudo bash update.sh --apply
 ```
@@ -223,7 +223,7 @@ sudo bash update.sh --apply --update-units
 
 此模式可能改变原版默认定时设置，必要时会重启受影响且原本 active 的服务/timer；更新 Hysteria 单元可能短暂断线。仍不覆盖 drop-in。自定义单元或程序若无法根据原版哈希/上次更新记录识别，更新器停止，不自动覆盖；应先人工审查，默认更新仍保留自定义单元。
 
-每次实际更新都会把涉及的**程序/单元**备份到 root 私有目录 `/var/backups/lightsail-vpn-update/<ID>/`；不复制密钥或数据库。发生安装/重启错误会尝试恢复这些文件。成功时终端打印备份 ID，需要时回退：
+每次实际更新都会把涉及的**程序/单元**备份到 root 私有目录 `/var/backups/fast-vpn-update/<ID>/`；不复制密钥或数据库。发生安装/重启错误会尝试恢复这些文件。成功时终端打印备份 ID，需要时回退：
 
 ```bash
 sudo bash update.sh --rollback <备份ID>

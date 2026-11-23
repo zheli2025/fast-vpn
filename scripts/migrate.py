@@ -35,7 +35,7 @@ SNAPSHOT=[*up.FILES,'/usr/local/bin/hysteria','/etc/hysteria/config.yaml',
           '/etc/nginx/sites-enabled/vpn-subscription','/etc/nginx/sites-enabled/default',
           '/etc/nginx/subscription-userinfo.conf',
           '/etc/systemd/system/traffic-update.service.d/migrate.conf',
-          '/etc/letsencrypt/renewal-hooks/deploy/lightsail-vpn-nginx',
+          '/etc/letsencrypt/renewal-hooks/deploy/fast-vpn-nginx',
           *['/etc/systemd/system/'+u for u in up.UNITS if u!='hysteria-server.service']]
 MANAGED_UNITS=[u for u in up.UNITS if u!='hysteria-server.service']
 STATE_UNITS=['hysteria-server.service','nginx',*MANAGED_UNITS,'snap.certbot.renew.timer']
@@ -158,7 +158,7 @@ class Migration:
 
     def backup(self,a):
         stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+secrets.token_hex(4)
-        directory=self.path('/var/backups/lightsail-vpn-migration')/stamp
+        directory=self.path('/var/backups/fast-vpn-migration')/stamp
         directory.mkdir(parents=True,mode=0o700); directory.parent.chmod(0o700)
         targets=SNAPSHOT+['/var/www/html/'+a.name+'.yaml']
         targets += ['/var/www/html/'+p.name for p in self.public_yaml()]
@@ -284,7 +284,7 @@ class Migration:
             # sub 输出含 token，捕获但不打印、不写入迁移日志。
             self.runner([str(self.path('/usr/local/bin/sub')),'update'])
             if not self.path('/snap/bin/certbot').exists(): self.runner(['snap','install','--classic','certbot'])
-            self.write('/etc/letsencrypt/renewal-hooks/deploy/lightsail-vpn-nginx',
+            self.write('/etc/letsencrypt/renewal-hooks/deploy/fast-vpn-nginx',
                        (self.repo/'scripts/reload-nginx.sh').read_bytes(),0o755)
             if boot.reusable_certificate(a.ip,self.path('/etc/letsencrypt/live'),self.runner):
                 print('复用现有有效 IP HTTPS 证书，不修改账户邮箱')
@@ -378,7 +378,7 @@ def main():
     if os.geteuid()!=0: raise ValueError('请用 sudo bash migrate.sh 运行')
     m=Migration()
     if not a.apply: m.report(a); return
-    with open('/run/lightsail-vpn-deploy.lock','a') as lock:
+    with open('/run/fast-vpn-deploy.lock','a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         m.apply(a)
 

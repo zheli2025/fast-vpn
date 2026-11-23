@@ -127,13 +127,13 @@ class TestMigration(unittest.TestCase):
         self.args.archive_old_subscriptions=True
         with contextlib.redirect_stdout(io.StringIO()): self.m.apply(self.args)
         self.assertFalse((self.root/'var/www/html/old.yaml').exists())
-        copies=list((self.root/'var/backups/lightsail-vpn-migration').glob('*/file-*'))
+        copies=list((self.root/'var/backups/fast-vpn-migration').glob('*/file-*'))
         self.assertTrue(any(p.read_text()=='old subscription fixture' for p in copies))
 
     def test_unknown_code_requires_explicit_replacement(self):
         self.args.replace_legacy_code=False
         with self.assertRaises(ValueError): self.m.apply(self.args)
-        self.assertFalse((self.root/'var/backups/lightsail-vpn-migration').exists())
+        self.assertFalse((self.root/'var/backups/fast-vpn-migration').exists())
 
     def test_other_sites_and_existing_state_rejected(self):
         self.write('/etc/nginx/sites-enabled/other','other site fixture')
