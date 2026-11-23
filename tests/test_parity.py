@@ -63,7 +63,7 @@ class TestParity(unittest.TestCase):
         self.assertIn('  type: '+baseline['auth']['type'],text)
         self.assertIn('  type: '+baseline['obfs']['type'],text)
 
-    def test_original_hashes_with_only_documented_fixes(self):
+    def test_baseline_hashes_with_documented_fixes(self):
         for line in (ROOT/'baseline.sha256').read_text().splitlines():
             expected,file=line.split(maxsplit=1)
             data=(ROOT/file).read_bytes()

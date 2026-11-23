@@ -1,8 +1,8 @@
 # fast-vpn：Lightsail VPN 部署仓库
 
-在另一个地区的全新 **Ubuntu 24.04 LTS Lightsail** 实例上复现当前项目的功能和已核对设置。支持 amd64 / arm64；不修改旧实例、不迁移旧秘密。与第一版精简仓库不同，这个版本恢复原版 `sub`、全量 Geo 缓存、AWS 套餐流量、域名用量采集及 TUI。
+在另一个地区的全新 **Ubuntu 24.04 LTS Lightsail** 实例上部署当前 fast-vpn 生产实例的功能和设置。支持 amd64 / arm64；不修改旧实例、不迁移旧秘密。与第一版精简仓库不同，这个版本恢复原版 `sub`、全量 Geo 缓存、AWS 套餐流量、域名用量采集及 TUI。
 
-完整对照、原版哈希和两处兼容修复见 [docs/PARITY.md](docs/PARITY.md)。实际服务及订阅的非敏感配置已经现场核对，结果见 [config/software-baseline.json](config/software-baseline.json)。复现服务设置、分流规则和流量记录功能；原机密钥、IP、订阅地址不复制，新实例独立生成/填写。流量历史不迁移，这也不是整机磁盘镜像。
+当前基线、哈希和两处兼容修复见 [docs/PARITY.md](docs/PARITY.md)。实际服务及订阅的非敏感配置已经现场核对，结果见 [config/software-baseline.json](config/software-baseline.json)。部署服务设置、分流规则和流量记录功能；旧实例密钥、IP、订阅地址不复制，新实例独立生成/填写。流量历史不迁移，这也不是整机磁盘镜像。
 
 ## 1. AWS 控制台手动操作
 
@@ -51,9 +51,9 @@ sudo bash deploy.sh \
 
 部署执行七步：
 
-1. 安装依赖，设定与原机一致的 `Etc/UTC` 时区。
-2. 下载与原机一致的 Hysteria **2.12.0**，验证官方 `hashes.txt`。
-3. 创建 hysteria、usage-tracker 用户及原项目目录、日志权限。
+1. 安装依赖，设定 `Etc/UTC` 时区。
+2. 下载当前生产版本 Hysteria **2.14.0**，验证官方 `hashes.txt`。
+3. 创建 hysteria、usage-tracker 用户及项目目录、日志权限，安装 16MB/BBR 内核参数。
 4. 生成目标机独立凭据、Hysteria 基础配置和本地统计 API；安装原版脚本、systemd 单元及已核对的内核参数。
 5. 原版 sub 先生成 HTTP 站点；安装 snap Certbot、申请 IP HTTPS 证书、启用续期后再次生成双协议站点。
 6. 首次下载全部五份规则文件，启动 Hysteria、域名采集和定时器。
@@ -132,7 +132,7 @@ sudo sub usage tui
 
 `token` 会轮换订阅令牌，需要在客户端换 URL；`rotate` 会轮换代理及混淆密码并重启，客户端需刷新订阅；`name` 会改变订阅路径；`update` 不下载 Geo、不自动轮换密码。
 
-规则与原机一致：大陆域名直连，`cn-ip` 带 `no-resolve`，其他走 PROXY。VPS 北京时间 00/06/12/18 点更新全部五份 Geo；客户端 MRS 每 86400 秒刷新。该版本按原机实际设置每天四次，并非上一版仓库的每天一次。完整 Geo 保留在服务器，但客户端依然只引用两个 MRS，不因此加载全量 DAT/MMDB。
+规则与当前基线一致：大陆域名直连，`cn-ip` 带 `no-resolve`，其他走 PROXY。VPS 北京时间 00/06/12/18 点更新全部五份 Geo；客户端 MRS 每 86400 秒刷新。该版本按当前设置每天四次，并非上一版仓库的每天一次。完整 Geo 保留在服务器，但客户端依然只引用两个 MRS，不因此加载全量 DAT/MMDB。
 
 ## 6. 更换静态 IP
 
@@ -166,13 +166,13 @@ sudo journalctl -u domain-usage.service -n 50 --no-pager
 
 证书失败检查 IP 绑定、TCP 80、ACME 路径和 `/var/log/letsencrypt/letsencrypt.log`。不要高频重复申请以免触发 CA 限额。日志分享前脱敏；查看日志不需要把密钥文件发给任何人。
 
-为复现原服务，保留 HTTP 和公开 webroot 结构，**不会自动升级为 HTTPS-only 或“公开目录之外的订阅”**。日常使用 HTTPS URL；HTTP 会明文传输 token 和订阅。原版精确路径有 token 校验，但公开 webroot 的其他副本/备份不自动保护，勿把任何订阅备份、临时秘密文件放进该目录。Hysteria UDP 仍为独立自签证书、`skip-cert-verify: true`，不等同于订阅 HTTPS 的受信任身份验证。
+为保持兼容，保留 HTTP 和公开 webroot 结构，**不会自动升级为 HTTPS-only 或“公开目录之外的订阅”**。日常使用 HTTPS URL；HTTP 会明文传输 token 和订阅。原版精确路径有 token 校验，但公开 webroot 的其他副本/备份不自动保护，勿把任何订阅备份、临时秘密文件放进该目录。Hysteria UDP 使用独立自签证书，订阅内用证书 `fingerprint` 固定；`skip-cert-verify: true` 仅用于兼容旧客户端，不等同于订阅 HTTPS 的受信任身份验证。
 
 ## 8. 文件、测试和 Git
 
-运行路径与原项目一致：`/etc/hysteria/config.yaml`、`/etc/hysteria/.sub-*`、`/etc/hysteria/.traffic-stats-secret`、`/var/www/html/<name>.yaml`、`/var/www/html/geo/`、`/var/lib/traffic/`、`/var/lib/domain-usage/`、`/etc/nginx/sites-available/vpn-subscription`。这些运行文件均不存放在 clone 目录。配置/权限详情见 [复现记录](docs/PARITY.md)。
+运行路径保持当前结构：`/etc/hysteria/config.yaml`、`/etc/hysteria/.sub-*`、`/etc/hysteria/.traffic-stats-secret`、`/var/www/html/<name>.yaml`、`/var/www/html/geo/`、`/var/lib/traffic/`、`/var/lib/domain-usage/`、`/etc/nginx/sites-available/vpn-subscription`。这些运行文件均不存放在 clone 目录。配置/权限详情见 [基线记录](docs/PARITY.md)。
 
-部署参数文件 `/etc/fast-vpn/install.json` 不含密码。它是防止误接管/误改参数的安装标记，不是用来手改服务配置的源文件。日常使用原版 `sub`。
+部署参数文件 `/etc/fast-vpn/install.json` 不含密码。它是防止误接管/误改参数的安装标记，不是用来手改服务配置的源文件。日常使用 `sub`。
 
 本地验证只使用临时目录和模拟服务调用，不读取生产密钥或调用 AWS：
 
@@ -181,7 +181,7 @@ bash -n deploy.sh update.sh migrate.sh scripts/sub.sh scripts/geo-update.sh scri
 python3 -m unittest discover -s tests -v
 ```
 
-测试还检查原版哈希和两处已记录的报表/清理修复；不代替新实例的 ACME、公网 UDP、手机实际连接验收。固定旧版本用于复现，不能据此认定它永远是最新或最安全版本；升级需单独检查和验证。
+测试还检查当前基线哈希和两处已记录的报表/清理修复；不代替新实例的 ACME、公网 UDP、手机实际连接验收。基线版本需定期核对上游更新，升级仍需单独检查和验证。
 
 你可以在此独立仓库手动设置远程和 push：
 

@@ -32,6 +32,7 @@ layout=load('migration_nginx_layout','nginx_layout.py')
 SNAPSHOT=[*up.FILES,'/usr/local/bin/hysteria','/etc/hysteria/config.yaml',
           '/etc/hysteria/.sub-state','/etc/hysteria/.sub-node','/etc/hysteria/.sub-token',
           '/etc/hysteria/.traffic-stats-secret','/etc/nginx/sites-available/vpn-subscription',
+          '/etc/sysctl.d/99-fast-vpn.conf','/etc/modules-load.d/tcp_bbr.conf',
           '/etc/nginx/sites-enabled/vpn-subscription','/etc/nginx/sites-enabled/default',
           '/etc/nginx/subscription-userinfo.conf',
           '/etc/systemd/system/traffic-update.service.d/migrate.conf',
@@ -136,15 +137,15 @@ class Migration:
             raise ValueError('--ip 与旧自签证书 SAN 不一致；先核对公网 IP，不自动重签旧证书')
         if not a.upgrade_hysteria:
             version=self.runner([str(self.path('/usr/local/bin/hysteria')),'version'])
-            if not re.search(r'v?2\.12\.0\b',version):
-                raise ValueError('为保证统计 API 兼容，旧版本需显式 --upgrade-hysteria 升级为已验证的 2.12.0')
+            if not re.search(r'v?2\.14\.0\b',version):
+                raise ValueError('为保证统计 API 兼容，旧版本需显式 --upgrade-hysteria 升级为已验证的 2.14.0')
         return cfg
 
     def report(self,a):
         self.preflight(a)
         print('基础旧安装迁移检查通过。--apply 将执行：')
         print('  备份并替换旧 sub/Geo 程序，补装域名统计和 AWS 套餐统计')
-        print('  保留代理密码、混淆密码、TLS 证书及所有额外 Hysteria 配置；增加本地 trafficStats')
+        print('  保留代理密码、混淆密码、TLS 证书及所有额外 Hysteria 配置；增加本地 trafficStats、ACL 与 16MB/BBR 内核参数')
         print('  生成新的订阅路径/token；客户端链接需要重新导入')
         if self.public_yaml():
             print('  发现旧公开 YAML 订阅；需加 --archive-old-subscriptions 移入 root 私密备份，防止旧鉴权被绕过')
@@ -153,7 +154,7 @@ class Migration:
         print('  接管默认 Nginx 站点，配置新 IP HTTPS 订阅，启用原版四次/日 Geo 定时器')
         print('  下载规则，重启 Hysteria 和域名采集；代理会短暂断线')
         print('  AWS 凭据不读取/复制，套餐统计可能仍需你手动配置只读身份')
-        if a.upgrade_hysteria: print('  验证官方 SHA256 后升级 Hysteria 到 2.12.0')
+        if a.upgrade_hysteria: print('  验证官方 SHA256 后升级 Hysteria 到 2.14.0')
         print('不会执行迁移。确认计划后加 --apply --replace-legacy-code。')
 
     def backup(self,a):
@@ -204,13 +205,15 @@ class Migration:
         result['auth']['password']=Quoted(result['auth']['password'])
         result['obfs']['salamander']['password']=Quoted(result['obfs']['salamander']['password'])
         result['trafficStats']=dict(stats,secret=Quoted(stats['secret']))
+        if 'acl' not in result:
+            result['acl']={'rules':[{'outbound':'reject','match':'cidr("127.0.0.0/8") || cidr("169.254.0.0/16") || cidr("10.0.0.0/8") || cidr("172.16.0.0/12") || cidr("192.168.0.0/16") || cidr("100.64.0.0/10") || cidr("::1/128") || cidr("fc00::/7") || cidr("fe80::/10")'},{'outbound':'direct'}]}
         return yaml.dump(result,Dumper=Dumper,allow_unicode=True,sort_keys=False),stats['secret']
 
     def install_binary(self):
         arch={'x86_64':'amd64','aarch64':'arm64'}.get(platform.machine())
         if not arch: raise ValueError('仅支持 amd64/arm64')
         with tempfile.TemporaryDirectory(prefix='vpn-migration-release-') as tmp:
-            base='https://github.com/apernet/hysteria/releases/download/app/v2.12.0/'
+            base='https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.14.0/'
             name='hysteria-linux-'+arch
             for file in (name,'hashes.txt'):
                 self.runner(['curl','-fsSL','--retry','3','--connect-timeout','15','--max-time','600',base+file,'-o',tmp+'/'+file])
@@ -270,6 +273,10 @@ class Migration:
                 self.write('/etc/systemd/system/'+unit,(self.repo/'systemd'/unit).read_bytes(),0o644)
             if a.upgrade_hysteria: self.install_binary()
             self.write('/etc/hysteria/config.yaml',config,0o640,'hysteria')
+            self.write('/etc/sysctl.d/99-fast-vpn.conf',(self.repo/'config/99-fast-vpn.conf').read_bytes(),0o644)
+            self.write('/etc/modules-load.d/tcp_bbr.conf',(self.repo/'config/tcp_bbr.conf').read_bytes(),0o644)
+            self.runner(['modprobe','tcp_bbr'])
+            self.runner(['sysctl','-p','/etc/sysctl.d/99-fast-vpn.conf'])
             self.write('/etc/hysteria/.traffic-stats-secret',stats_secret+'\n',0o640,'usage-tracker')
             self.write('/etc/hysteria/.sub-state',f'/var/www/html/{a.name}.yaml\n')
             self.write('/etc/hysteria/.sub-node',a.node+'\n')
@@ -369,7 +376,7 @@ def main():
     action.add_argument('--check',action='store_true')
     action.add_argument('--apply',action='store_true')
     p.add_argument('--replace-legacy-code',action='store_true',help='显式同意备份并替换旧 sub/Geo 程序')
-    p.add_argument('--upgrade-hysteria',action='store_true',help='备份原二进制并升级到 2.12.0')
+    p.add_argument('--upgrade-hysteria',action='store_true',help='备份原二进制并升级到 2.14.0')
     p.add_argument('--archive-old-subscriptions',action='store_true',help='将旧公开 YAML 订阅归档至 root 私密备份，旧链接需替换')
     p.add_argument('--adopt-nginx-site',action='append',default=[],metavar='NAME',help='显式备份并停用诊断认可的旧静态 VPN 站点，可重复指定')
     p.add_argument('--inspect-nginx',action='store_true',help='单独运行，仅输出脱敏 Nginx 路由结构，不需要其他参数')

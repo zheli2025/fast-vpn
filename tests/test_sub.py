@@ -41,7 +41,9 @@ import os,sys
 from pathlib import Path
 a=sys.argv[1:]
 if a[0]=='rand': os.execv('/usr/bin/openssl',['openssl']+a)
-elif a[0]=='x509': print(Path(a[a.index('-in')+1]).read_text())
+elif a[0]=='x509':
+    if '-fingerprint' in a: print('sha256 Fingerprint=AA:BB:CC:DD')
+    else: print(Path(a[a.index('-in')+1]).read_text())
 elif a[0]=='req':
     Path(a[a.index('-keyout')+1]).write_text('dummy-new-key')
     Path(a[a.index('-out')+1]).write_text('IP Address:'+a[a.index('-subj')+1].split('=')[1])
@@ -100,6 +102,7 @@ elif a[0]=='delete':
         self.assertIn('RULE-SET,cn-ip,DIRECT,no-resolve',yaml)
         self.assertIn('interval: 86400',yaml)
         self.assertIn('password: "fixture-auth"',yaml)
+        self.assertIn('fingerprint: "AA:BB:CC:DD"',yaml)
         self.assertIn('listen 80;',site); self.assertIn('listen 443 ssl;',site)
         self.assertIn('include '+str(self.nginx/'userinfo'),site)
 

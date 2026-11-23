@@ -315,6 +315,8 @@ cmd_update() {
     old_file="$(cat "$STATE_FILE")"
   fi
 
+  cert_fingerprint="$(openssl x509 -in "$CERT_FILE" -noout -fingerprint -sha256 2>/dev/null | sed -E 's/^.*=//' || true)"
+  [[ -n "$cert_fingerprint" ]] || die "无法读取证书指纹：$CERT_FILE"
   cat > "$file.tmp" <<EOF
 mixed-port: 7890
 allow-lan: false
@@ -331,6 +333,7 @@ proxies:
     obfs: salamander
     obfs-password: "${obfs_password}"
     skip-cert-verify: true
+    fingerprint: "${cert_fingerprint}"
 
 rule-providers:
   cn-domain:
@@ -356,7 +359,10 @@ proxy-groups:
       - DIRECT
 
 rules:
+  - DOMAIN-SUFFIX,t3coderelay.com,PROXY
+  - DOMAIN-SUFFIX,t3.codes,PROXY
   - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
   - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
   - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
   - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve

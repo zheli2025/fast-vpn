@@ -56,7 +56,7 @@ class TestMigration(unittest.TestCase):
         if self.fail_at and self.fail_at in ' '.join(args):
             self.fail_at=None; raise RuntimeError('injected failure')
         if args[:2]==['openssl','x509']: return 'IP Address:1.1.1.1\n'
-        if args[0].endswith('/hysteria') and args[-1]=='version': return 'Version: v2.12.0'
+        if args[0].endswith('/hysteria') and args[-1]=='version': return 'Version: v2.14.0'
         if args[:2]==['systemctl','is-active']:
             if args[-1] not in self.active: raise RuntimeError('inactive')
         if args[:2]==['systemctl','is-enabled']: return 'enabled' if args[-1] in self.enabled else 'disabled'

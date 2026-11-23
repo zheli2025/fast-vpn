@@ -104,6 +104,11 @@ obfs:
 trafficStats:
   listen: 127.0.0.1:25413
   secret: "{stats}"
+acl:
+  rules:
+    - outbound: reject
+      match: 'cidr("127.0.0.0/8") || cidr("169.254.0.0/16") || cidr("10.0.0.0/8") || cidr("172.16.0.0/12") || cidr("192.168.0.0/16") || cidr("100.64.0.0/10") || cidr("::1/128") || cidr("fc00::/7") || cidr("fe80::/10")'
+    - outbound: direct
 '''
 
 
@@ -123,7 +128,7 @@ def initialize(a):
     if not config.exists():
         stats=secrets.token_hex(32)
         atomic(secret,stats+'\n',0o640,'usage-tracker')
-        atomic(config,configuration(secrets.token_hex(16),secrets.token_hex(16),stats),0o644)
+        atomic(config,configuration(secrets.token_hex(16),secrets.token_hex(16),stats),0o640,'hysteria')
     elif not secret.exists():
         raise ValueError('已有配置但统计 API secret 缺失，停止以免生成不匹配的 secret')
     cert=BASE/'certs/server.crt'; key=BASE/'certs/server.key'

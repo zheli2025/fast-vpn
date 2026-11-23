@@ -65,7 +65,7 @@ sudo bash migrate.sh --inspect-nginx
 - `--replace-legacy-code`：明确允许先私密备份再替换旧 sub/Geo，不是将未知指纹冒认为可信。
 - `--archive-old-subscriptions`：公开 Web 根目录中的旧 `.yaml/.yml` 移入本次 root 私密备份，避免接管默认站点后绕过旧鉴权。旧 URL 需换新 URL，旧文件可恢复；其他目录不动，遇到订阅符号链接停止。
 
-`--upgrade-hysteria` 备份旧二进制并验证官方 SHA256，更新为已核对的 2.12.0，确保统计 API 兼容。确认已经是 2.12.0、不想替换二进制时，可在 check/apply 两步都省略；其他版本要求明确升级。
+`--upgrade-hysteria` 备份旧二进制并验证官方 SHA256，更新为已核对的 2.14.0，确保统计 API 兼容；同时安装 16MB/BBR 内核参数和 ACL 规则。确认已经是 2.14.0、不想替换二进制时，可在 check/apply 两步都省略；其他版本要求明确升级。
 
 补齐标准 sub、完整 Geo 缓存、域名采集/TUI/SQLite、AWS 套餐统计及元数据、四次/日 Geo、半小时套餐查询、每日历史维护。保留 Hysteria 自身的 service 单元，原数据库不清空，旧 Geo 单元会替换成仓库设置。新订阅使用仓库的大陆直连/非大陆代理规则。
 

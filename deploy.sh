@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 全新 Lightsail Ubuntu 24.04：复现原项目运行设置，不迁移旧实例的凭据或数据库。
+# 全新 Lightsail Ubuntu 24.04：部署当前 fast-vpn 生产设置，不迁移旧实例的凭据或数据库。
 set -euo pipefail
 umask 077
 src="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,21 +23,21 @@ if [[ ! -f /etc/fast-vpn/install.json ]]; then
     die '检测到已有服务，请使用全新专用实例'
   fi
 fi
-echo '1/7 安装依赖并统一为原机 UTC 时区'
+echo '1/7 安装依赖并统一为 UTC 时区'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y nginx openssl curl ca-certificates python3 python3-boto3 snapd
 timedatectl set-timezone Etc/UTC
-echo '2/7 安装原机版本 Hysteria 2.12.0，核对官方 SHA256'
+echo '2/7 安装当前生产版本 Hysteria 2.14.0，核对官方 SHA256'
 case "$(uname -m)" in x86_64) arch=amd64;; aarch64) arch=arm64;; *) die '仅支持 amd64/arm64';; esac
 tmp="$(mktemp -d /tmp/fast-vpn-release.XXXXXX)"
 trap 'rm -f "$tmp/hysteria-linux-$arch" "$tmp/hashes.txt"; rmdir "$tmp"' EXIT
-base='https://github.com/apernet/hysteria/releases/download/app/v2.12.0'
+base='https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.14.0'
 curl -fSL --retry 3 --connect-timeout 15 --max-time 600 "$base/hysteria-linux-$arch" -o "$tmp/hysteria-linux-$arch"
 curl -fSL --retry 3 --max-time 120 "$base/hashes.txt" -o "$tmp/hashes.txt"
 python3 "$src/scripts/verify-release.py" "$tmp" "hysteria-linux-$arch"
 install -m 0755 "$tmp/hysteria-linux-$arch" /usr/local/bin/hysteria
-echo '3/7 创建服务用户、原项目目录及统计所需权限'
+echo '3/7 创建服务用户、项目目录及统计所需权限'
 id hysteria >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin hysteria
 id usage-tracker >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin usage-tracker
 install -d -m 0700 /etc/fast-vpn
@@ -60,6 +60,8 @@ install -m 0755 "$src/scripts/traffic-launcher.py" /usr/local/bin/traffic-update
 install -m 0755 "$src/scripts/domain-usage.py" /usr/local/bin/domain-usage
 install -m 0644 "$src/systemd/"* /etc/systemd/system/
 install -m 0644 "$src/config/99-fast-vpn.conf" /etc/sysctl.d/99-fast-vpn.conf
+install -m 0644 "$src/config/tcp_bbr.conf" /etc/modules-load.d/tcp_bbr.conf
+modprobe tcp_bbr
 sysctl -p /etc/sysctl.d/99-fast-vpn.conf
 systemctl daemon-reload
 systemctl enable --now nginx
